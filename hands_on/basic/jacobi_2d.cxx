@@ -8,7 +8,14 @@
 #include <assert.h>
 #include <mpi.h>
 
-#include "include/bitmap_IO.hpp"
+#include "aux/queue.h"
+#include "aux/success_or_die.h"
+#include "aux/waitsome.h"
+#include "aux/success_or_die.h"
+
+#include <GASPI.h>
+
+#include "aux/bitmap_IO.hpp"
 
 // sponsored by stack overflow: http://stackoverflow.com/questions/440133
 std::string random_string(size_t length) {
@@ -29,7 +36,10 @@ std::string random_string(size_t length) {
 
 int main (int argc, char * argv[]) {
 
+    // Invoke MPI::Init before gaspi_proc_init !!!
     MPI::Init (argc, argv);
+
+    SUCCESS_OR_DIE( gaspi_proc_init(GASPI_BLOCK) );
 
     const uint64_t height    =   3*4*5*6+2;
     const uint64_t width     = 2*3*4*5*6+2;
@@ -43,13 +53,30 @@ int main (int argc, char * argv[]) {
     assert(num_ranks == radix*radix);
     assert((height-2) % radix == 0);
     assert((width -2) % radix == 0);
+    
+    //////////////////////////////////////////////////////////////////////////
+    // GASPI SEGMENT 
+    //////////////////////////////////////////////////////////////////////////
+    gaspi_segment_id_t const segment_id = 0;
+    gaspi_segment_id_t const segment_id_root = 1;
 
     const uint64_t local_height = (height-2)/radix+2;
     const uint64_t local_width  = (width -2)/radix+2;
-    std::vector<double> image(height*width*is_root);
-    std::vector<double> ying(local_height*local_width, 0);
-    std::vector<double> yang(local_height*local_width, 0);
-
+    
+    // Create gaspi segments here for ying and yang
+    SUCCESS_OR_DIE( gaspi_segment_create(
+        segment_id,
+        local_height*local_width*2*sizeof(double), 
+        GASPI_GROUP_ALL, GASPI_BLOCK, GASPI_MEM_INITIALIZED
+      )
+    );
+    // Create pointer to segment
+    gaspi_pointer_t array;
+    SUCCESS_OR_DIE( gaspi_segment_ptr (segment_id, &array) );
+    // Use ying and yang again
+    double * ying = (double *) (array);
+    double * yang = ying + local_height*local_width;
+    
     // make indexing great again!
     auto       at = [&] (const uint64_t& row, const uint64_t& col) {
         return row*width+col;
@@ -57,21 +84,39 @@ int main (int argc, char * argv[]) {
     auto local_at = [&] (const uint64_t& row, const uint64_t& col) {
         return row*local_width+col;
     };
-
-    if (is_root) {
+    double * image = nullptr;
+    if(is_root)
+    {
+        SUCCESS_OR_DIE( gaspi_segment_alloc(
+            segment_id_root, 
+            height*width*sizeof(double),
+            GASPI_MEM_UNINITIALIZED)
+        );
+        SUCCESS_OR_DIE( gaspi_segment_register(
+            segment_id_root,
+            rank,
+            GASPI_BLOCK)
+        );
+        
+        gaspi_pointer_t image_gaspi_ptr;
+        SUCCESS_OR_DIE( gaspi_segment_ptr (segment_id_root, &image_gaspi_ptr) );
+        image = (double *) (image_gaspi_ptr);
+        
         // draw a checkerboard
         const uint64_t stride = 181;
         for (uint64_t row = 0; row < height; ++row)
             for (uint64_t col = 0; col < width; ++col)
                 image[at(row, col)] = (row/stride + col/stride) % 2;
     }
-
+ 
     //////////////////////////////////////////////////////////////////////////
     // SCATTER
     //////////////////////////////////////////////////////////////////////////
-
-
-
+    // TODO
+    // Use write_list_notify_and_wait to scatter data with displacements
+    // Make sure to use the right segment ids
+    // Calculate the corresponding offsets on local and remote segments
+    
 
     //////////////////////////////////////////////////////////////////////////
     // FIXPOINT COMPUTATION
@@ -105,8 +150,40 @@ int main (int argc, char * argv[]) {
     };
     while (error > 1E-4 && counter < 1UL << 14) {
 
-       
-        // Send the data
+        MPI::Request req[8];
+		// There is a neighbour below so send it some juicy data
+        if (verti+1 < radix) {
+        	// Do *not* send the halo in the row, but only the data
+            req[0] = MPI::COMM_WORLD.Isend(&ying[at_tile(local_height-2, 1)],
+            	local_width-2, MPI::DOUBLE, rank+radix, 0);
+            // Receive at halo
+            req[1] = MPI::COMM_WORLD.Irecv(&ying[at_tile(local_height-1, 0)],
+            	local_width-2, MPI::DOUBLE, rank+radix, 0);
+        }
+		// Oh, there is a tile above us. Let's give him/her/it some data
+        if (verti > 0) {
+        	// Send data
+            req[2] = MPI::COMM_WORLD.Isend(&ying[at_tile(1, 1)], 
+            	local_width-2, MPI::DOUBLE, rank-radix, 0);
+            // Receive in halo
+            req[3] = MPI::COMM_WORLD.Irecv(&ying[at_tile(0,0)], 
+            	local_width-2, MPI::DOUBLE, rank-radix, 0);
+        }
+		// Oh my!!! There is a neighbour right of us.
+        if (horiz+1 < radix) {
+        	// Send data right of us
+            req[4] = MPI::COMM_WORLD.Isend(&ying[at_tile(1, local_width-2)],
+            	1, col_t, rank+1, 0);
+            req[5] = MPI::COMM_WORLD.Irecv(&ying[at_tile(1, local_width-1)],
+            	1, col_t, rank+1, 0);
+        }
+		// You know...
+        if (horiz > 0) {
+            req[6] = MPI::COMM_WORLD.Isend(&ying[at_tile(1, 1)], 
+            	1, col_t, rank-1, 0);
+            req[7] = MPI::COMM_WORLD.Irecv(&ying[at_tile(1, 0)],
+            	1, col_t, rank-1, 0); 
+        }
 
         // relax every pixel in the interior
         for (uint64_t row = 2; row < local_height-2; ++row)
@@ -114,8 +191,8 @@ int main (int argc, char * argv[]) {
                 yang[local_at(row, col)] = update(row, col);
 
         // Wait until data received
+        req[1].Wait(); req[3].Wait(); req[5].Wait(); req[7].Wait();
 
-            
         // fix the borders
         for (uint64_t col = 2; col < local_width-2; ++col)
             yang[local_at(1, col)] = update(1, col);
@@ -127,8 +204,8 @@ int main (int argc, char * argv[]) {
             yang[local_at(row, local_width-2)] = update(row, local_width-2);
 
         // Wait until data send
+        req[0].Wait(); req[2].Wait(); req[4].Wait(); req[6].Wait();
 
-        
         double local_error = 0;
         for (uint64_t row = 1; row < local_height-1; ++row) {
             for (uint64_t col = 1; col < local_width-1; ++col) {
@@ -139,8 +216,9 @@ int main (int argc, char * argv[]) {
             }
         }
 
-    
-    
+        // every process needs the same error
+        MPI::COMM_WORLD.Allreduce(&local_error, &error, 1,
+                                  MPI::DOUBLE, MPI::SUM);
 
         // status updates every print_every iteration
         if (counter++ % print_every == print_every-1 && is_root)
@@ -152,24 +230,39 @@ int main (int argc, char * argv[]) {
     if (is_root)
         std::cout << "# Final squared error after " << counter
                   << " iterations: " << error << std::endl;
+
     //////////////////////////////////////////////////////////////////////////
     // GATHER
     //////////////////////////////////////////////////////////////////////////
+    // create tile data type
+    MPI::Datatype tile_t =
+        MPI::DOUBLE.Create_vector (local_height, local_width , width)
+                   .Create_resized(0, sizeof(double));
+    tile_t.Commit();
+    int32_t counts[num_ranks], displs[num_ranks];
+    for (uint64_t proc = 0; proc < num_ranks; ++proc) {
+        const uint64_t i = proc / radix, j = proc % radix;
+        counts[proc] = 1;
+        displs[proc] = i*(local_height-2)*width+j*(local_width-2);
+    }
+    MPI::COMM_WORLD.Gatherv( ying, local_height*local_width,MPI::DOUBLE,
+        image, counts, displs, tile_t, 0);
 
-    
-                  
     //////////////////////////////////////////////////////////////////////////
     // CHECK
     //////////////////////////////////////////////////////////////////////////
 
     if (is_root) {
         std::string  filename = random_string(8)+".bmp";
-        dump_bitmap(image.data(), height, width, "www/"+filename);
-        std::cout << "# See http://iaimz105.informatik.uni-mainz.de/"
+        dump_bitmap(image, height, width, filename);
+        std::cout << "# See "
                   << filename << "\nParallel programming is "
                   << (counter == 8353 ? "fun!" : "error-prone!") << std::endl;
     }
-
+    
+    SUCCESS_OR_DIE( gaspi_wait ( queue_id, GASPI_BLOCK ) );
+    SUCCESS_OR_DIE( gaspi_proc_term(GASPI_BLOCK) );
+  
     MPI::Finalize();
 
 }

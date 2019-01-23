@@ -152,6 +152,71 @@ write_notify_and_cycle
 }
 
 void
+write_list_notify_and_wait 
+	( const gaspi_number_t num
+        , gaspi_segment_id_t * const segment_id_local
+        , gaspi_offset_t * const offset_local
+        , gaspi_rank_t const rank
+        , gaspi_segment_id_t * const segment_id_remote
+        , gaspi_offset_t * const offset_remote
+        , gaspi_size_t * const size
+        , gaspi_notification_id_t const notification_id
+        , gaspi_notification_t const notification_value
+        , gaspi_queue_id_t const queue
+        )
+{
+  gaspi_timeout_t const timeout = GASPI_BLOCK;
+  gaspi_return_t ret;
+  const gaspi_segment_id_t segment_id_notification = 0;
+  /* write, wait if required and re-submit */
+  while ((ret = ( gaspi_write_list_notify( 
+            num, 
+            segment_id_local, 
+            offset_local, 
+            rank, 
+            segment_id_remote, 
+            offset_remote, 
+            size,
+            segment_id_notification,
+            notification_id, 
+            notification_value, 
+            queue, 
+            timeout)   
+	    )) == GASPI_QUEUE_FULL)
+    {
+      SUCCESS_OR_DIE (gaspi_wait (queue,
+				  GASPI_BLOCK));
+    }
+  ASSERT (ret == GASPI_SUCCESS);
+}
+
+void write_list_and_wait
+    (const gaspi_number_t num
+        , gaspi_segment_id_t * const segment_id_local
+        , gaspi_offset_t * const offset_local
+        , gaspi_rank_t const rank
+        , gaspi_segment_id_t * const segment_id_remote
+        , gaspi_offset_t * const offset_remote
+        , gaspi_size_t * const size
+        , gaspi_queue_id_t const queue
+        )
+{
+      gaspi_timeout_t const timeout = GASPI_BLOCK;
+  gaspi_return_t ret;
+  
+  /* write, wait if required and re-submit */
+  while ((ret = ( gaspi_write_list( num, segment_id_local, offset_local, 
+                    rank, segment_id_remote, offset_remote, size,
+                    queue, timeout)   
+	    )) == GASPI_QUEUE_FULL)
+    {
+      SUCCESS_OR_DIE (gaspi_wait (queue,
+				  GASPI_BLOCK));
+    }
+  ASSERT (ret == GASPI_SUCCESS);
+}
+
+void
 wait_for_flush_queue
         (gaspi_queue_id_t const queue)
 {

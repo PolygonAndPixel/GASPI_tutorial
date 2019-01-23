@@ -10,9 +10,9 @@ CFLAGS += -Wall
 CFLAGS += -Wextra
 CFLAGS += -Wshadow
 CFLAGS += -O3
-CFLAGS += -std=c99
+# CFLAGS += -std=c99
 
-CC = mpicc
+CC = mpic++
 
 ###############################################################################
 
@@ -24,7 +24,6 @@ LDFLAGS += $(addprefix -L,$(LIBRARY_DIR))
 
 CFLAGS += $(addprefix -I,$(INCLUDE_DIR))
 
-
 LIB += GPI2
 LIB += ibverbs
 LIB += pthread
@@ -35,17 +34,20 @@ OBJ += ../aux/waitsome
 
 ###############################################################################
 
-default: $(BIN)
+default: $(BIN) jacobi_2d
 
 %.exe: %.o $(addsuffix .o, $(OBJ))
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(addprefix -l, $(LIB))
 
+jacobi_2d:
+	$(CC) $(CFLAGS) -std=c++11 -o jacobi_2d.exe jacobi_2d.cxx ../aux/queue.c ../aux/waitsome.c $(LDFLAGS) $(addprefix -l, $(LIB))
+	
 ###############################################################################
 
 .PHONY: clean objclean
 
 objclean:
-	rm -f *.o ../aux/*.o
+	rm -f *.o
 
 clean: objclean
 	rm -f $(BIN)
