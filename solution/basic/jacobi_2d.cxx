@@ -15,7 +15,7 @@
 
 #include <GASPI.h>
 
-// #include "bitmap_IO.hpp"
+#include "aux/bitmap_IO.hpp"
 
 // sponsored by stack overflow: http://stackoverflow.com/questions/440133
 std::string random_string(size_t length) {
@@ -35,12 +35,12 @@ std::string random_string(size_t length) {
 }
 
 int main (int argc, char * argv[]) {
-    std::cout << "Start\n";
+
     // Invoke MPI::Init before gaspi_proc_init !!!
     MPI::Init (argc, argv);
-    std::cout << "MPI initialised\n";
+
     SUCCESS_OR_DIE( gaspi_proc_init(GASPI_BLOCK) );
-    std::cout << "GASPI initialised\n";
+
     const uint64_t height    =   3*4*5*6+2;
     const uint64_t width     = 2*3*4*5*6+2;
     const uint64_t num_ranks = MPI::COMM_WORLD.Get_size();
@@ -53,8 +53,7 @@ int main (int argc, char * argv[]) {
     assert(num_ranks == radix*radix);
     assert((height-2) % radix == 0);
     assert((width -2) % radix == 0);
-    if( is_root ) 
-        std::cout << "Asserts done\n";
+    
     //////////////////////////////////////////////////////////////////////////
     // GASPI SEGMENT 
     //////////////////////////////////////////////////////////////////////////
@@ -68,7 +67,7 @@ int main (int argc, char * argv[]) {
     SUCCESS_OR_DIE( gaspi_segment_create(
         segment_id,
         local_height*local_width*2*sizeof(double), 
-        GASPI_GROUP_ALL, GASPI_BLOCK, GASPI_MEM_UNINITIALIZED
+        GASPI_GROUP_ALL, GASPI_BLOCK, GASPI_MEM_INITIALIZED
       )
     );
     // Create pointer to segment
@@ -85,7 +84,7 @@ int main (int argc, char * argv[]) {
     auto local_at = [&] (const uint64_t& row, const uint64_t& col) {
         return row*local_width+col;
     };
-    
+    double * image = nullptr;
     if(is_root)
     {
         SUCCESS_OR_DIE( gaspi_segment_alloc(
@@ -99,46 +98,35 @@ int main (int argc, char * argv[]) {
             GASPI_BLOCK)
         );
         
-//         SUCCESS_OR_DIE( gaspi_segment_create(
-//             segment_id_root,
-//             height*width*sizeof(double), 
-//             GASPI_GROUP_ALL, GASPI_BLOCK, GASPI_MEM_UNINITIALIZED
-//         )
-//         );
-        
-//         std::vector<double> image(height*width*is_root);
         gaspi_pointer_t image_gaspi_ptr;
         SUCCESS_OR_DIE( gaspi_segment_ptr (segment_id_root, &image_gaspi_ptr) );
-        double * image = (double *) (image_gaspi_ptr);
+        image = (double *) (image_gaspi_ptr);
         
         // draw a checkerboard
         const uint64_t stride = 181;
         for (uint64_t row = 0; row < height; ++row)
             for (uint64_t col = 0; col < width; ++col)
                 image[at(row, col)] = (row/stride + col/stride) % 2;
-        
-    
     }
-    if( is_root ) 
-        std::cout << "Segments created\n";
+ 
     //////////////////////////////////////////////////////////////////////////
     // SCATTER
     //////////////////////////////////////////////////////////////////////////
 
     // We always write to the same segment
-    std::vector<gaspi_segment_id_t> segment_id_vec(local_height-2, segment_id);
+    std::vector<gaspi_segment_id_t> segment_id_vec(local_height, segment_id);
     // We read from segment 1 all the time
-    std::vector<gaspi_segment_id_t> segment_id_image_vec(local_height-2, segment_id_root);
-    std::vector<gaspi_offset_t> offset_local(local_height-2);
-    std::vector<gaspi_offset_t> offset_remote(local_height-2);
-    std::vector<gaspi_size_t> size(local_height, (local_width-2)*sizeof(double));
+    std::vector<gaspi_segment_id_t> segment_id_image_vec(local_height, segment_id_root);
+    std::vector<gaspi_offset_t> offset_local(local_height);
+    std::vector<gaspi_offset_t> offset_remote(local_height);
+    std::vector<gaspi_size_t> size(local_height, local_width*sizeof(double));
     
     gaspi_notification_id_t data_available = 0;
     gaspi_queue_id_t queue_id = 0;
     // Only root distributes data
     if(is_root)
     {
-        gaspi_offset_t offset_basis_remote = (local_width+1)*sizeof(double);
+        gaspi_offset_t offset_basis_remote = 0;//(local_width+1)*sizeof(double);
         for(auto &off: offset_remote)
         {
             off = offset_basis_remote;
@@ -150,49 +138,42 @@ int main (int argc, char * argv[]) {
             gaspi_offset_t offset_basis_local = 
                 ( next_rank % radix ) * (local_width-2) 
                 + ( next_rank / radix ) * (local_height-2)*width;
+
             // Always think in bytes!
             offset_basis_local *= sizeof(double);
 
             // Add the offset for every local_row to send
-            for(auto row=0; row<local_height-2; row++)
+            for(auto &off: offset_local)
             {
-                offset_local[row] = offset_basis_local;
-                offset_basis_local += width*sizeof(double);                
+                off = offset_basis_local;
+                offset_basis_local += width*sizeof(double); 
             }
-            std::cout << "Sending to " << next_rank << "\n" << std::flush;
+
             // Send the data
             write_list_notify_and_wait(
-                local_height-2, segment_id_image_vec.data(), offset_local.data(),
+                local_height, segment_id_image_vec.data(), offset_local.data(),
                 next_rank, segment_id_vec.data(), offset_remote.data(), 
                 size.data(), data_available, next_rank+1, queue_id);
         }
         // We also need the data in the segment of root 
         gaspi_offset_t offset_basis_local = 0;
-        for(auto row=0; row<local_height-2; row++)
+        for(auto &off: offset_local)
         {
-            offset_local[row] = offset_basis_local;
-            offset_basis_local += width*sizeof(double);                
+            off = offset_basis_local;
+            offset_basis_local += width*sizeof(double); 
         }
-     
-//         std::cout << "rank " << rank << "sends from ";
-//         for(auto &off: offset_local)
-//             std::cout << off/sizeof(double) << ", ";
-//         std::cout << " to ";
-//         for(auto &off: offset_remote)
-//             std::cout << off/sizeof(double) << ", ";
-//         std::cout << std::endl << std::flush;
-    
+
+
         
         write_list_notify_and_wait(
-            local_height-2, segment_id_vec.data(), offset_local.data(), 
+            local_height, segment_id_image_vec.data(), offset_local.data(), 
             0, segment_id_vec.data(), offset_remote.data(), 
             size.data(), data_available, 1, queue_id);
     }
-    
+
     // Every rank waits for its data and starts working 
     wait_or_die(segment_id, data_available, rank+1);
-    if( is_root ) 
-        std::cout << "Data scattered\n";
+
     //////////////////////////////////////////////////////////////////////////
     // FIXPOINT COMPUTATION
     //////////////////////////////////////////////////////////////////////////
@@ -309,48 +290,28 @@ int main (int argc, char * argv[]) {
     //////////////////////////////////////////////////////////////////////////
     // GATHER
     //////////////////////////////////////////////////////////////////////////
-    // Local offset = iterate over local array
-    gaspi_offset_t offset_basis_local = (local_width+1)*sizeof(double);
-    for(auto row=0; row<local_height; row++)
-    {
-        offset_local[row] = offset_basis_local;
-        offset_basis_local += local_width*sizeof(double);                
+    // create tile data type
+    MPI::Datatype tile_t =
+        MPI::DOUBLE.Create_vector (local_height, local_width , width)
+                   .Create_resized(0, sizeof(double));
+    tile_t.Commit();
+    int32_t counts[num_ranks], displs[num_ranks];
+    for (uint64_t proc = 0; proc < num_ranks; ++proc) {
+        const uint64_t i = proc / radix, j = proc % radix;
+        counts[proc] = 1;
+        displs[proc] = i*(local_height-2)*width+j*(local_width-2);
     }
-    // Remote offset = tile based indexing
-    gaspi_offset_t offset_basis_remote = 
-        ( rank % radix ) * (local_width-2) 
-        + ( rank / radix ) * (local_height-2)*width;
-    offset_basis_remote *= sizeof(double);
-    for(auto row=0; row<local_height-2; row++)
-    {
-        offset_remote[row] = offset_basis_remote;
-        offset_basis_remote += width*sizeof(double);                
-    }
-//     if(rank == 1)
-//     {
-//         std::cout << "rank " << rank << "sends from ";
-//         for(auto &off: offset_local)
-//             std::cout << off/sizeof(double) << ", ";
-//         std::cout << " to ";
-//         for(auto &off: offset_remote)
-//             std::cout << off/sizeof(double) << ", ";
-//         std::cout << std::endl << std::flush;
-//     }
-    // Send the data 
-    write_list_and_wait(
-        local_height-2, segment_id_vec.data(), offset_local.data(), 0, 
-        segment_id_image_vec.data(), offset_remote.data(), size.data(), 
-        queue_id);
-    std::cout << "Data is gathered\n";
-    SUCCESS_OR_DIE ( gaspi_barrier(GASPI_GROUP_ALL, GASPI_BLOCK) );
+    MPI::COMM_WORLD.Gatherv( ying, local_height*local_width,MPI::DOUBLE,
+        image, counts, displs, tile_t, 0);
+
     //////////////////////////////////////////////////////////////////////////
     // CHECK
     //////////////////////////////////////////////////////////////////////////
 
     if (is_root) {
         std::string  filename = random_string(8)+".bmp";
-//         dump_bitmap(image.data(), height, width, "www/"+filename);
-        std::cout << "# See http://iaimz105.informatik.uni-mainz.de/"
+        dump_bitmap(image, height, width, filename);
+        std::cout << "# See "
                   << filename << "\nParallel programming is "
                   << (counter == 8353 ? "fun!" : "error-prone!") << std::endl;
     }
