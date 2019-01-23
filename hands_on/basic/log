@@ -1,9 +1,0 @@
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I..   -c -o helloworld.o helloworld.c
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I..   -c -o ../aux/queue.o ../aux/queue.c
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I..   -c -o ../aux/waitsome.o ../aux/waitsome.c
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I.. -o helloworld.exe helloworld.o ../aux/queue.o ../aux/waitsome.o -L/opt/GPI2/lib64 -lGPI2 -libverbs -lpthread -lm
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I..   -c -o segments.o segments.c
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I.. -o segments.exe segments.o ../aux/queue.o ../aux/waitsome.o -L/opt/GPI2/lib64 -lGPI2 -libverbs -lpthread -lm
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I..   -c -o onesided.o onesided.c
-mpicc -Wall -Wextra -Wshadow -O3 -std=c99 -I/opt/GPI2/include -I.. -o onesided.exe onesided.o ../aux/queue.o ../aux/waitsome.o -L/opt/GPI2/lib64 -lGPI2 -libverbs -lpthread -lm
-rm ../aux/waitsome.o onesided.o helloworld.o segments.o ../aux/queue.o
