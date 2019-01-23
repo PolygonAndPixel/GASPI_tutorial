@@ -126,7 +126,7 @@ int main (int argc, char * argv[]) {
     // Only root distributes data
     if(is_root)
     {
-        gaspi_offset_t offset_basis_remote = 0;//(local_width+1)*sizeof(double);
+        gaspi_offset_t offset_basis_remote = 0;
         for(auto &off: offset_remote)
         {
             off = offset_basis_remote;
