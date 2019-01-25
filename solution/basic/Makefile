@@ -10,7 +10,6 @@ CFLAGS += -Wall
 CFLAGS += -Wextra
 CFLAGS += -Wshadow
 CFLAGS += -O3
-# CFLAGS += -std=c99
 
 CC = mpic++
 
@@ -34,13 +33,13 @@ OBJ += ../aux/waitsome
 
 ###############################################################################
 
-default: $(BIN) jacobi_2d
+default: $(BIN) jacobi_2d  
 
 %.exe: %.o $(addsuffix .o, $(OBJ))
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(addprefix -l, $(LIB))
+	$(CC) $(CFLAGS) -std=c99 -o $@ $^ $(LDFLAGS) $(addprefix -l, $(LIB)) 
 
 jacobi_2d:
-	$(CC) $(CFLAGS) -std=c++11 -o jacobi_2d.exe jacobi_2d.cxx ../aux/queue.c ../aux/waitsome.c $(LDFLAGS) $(addprefix -l, $(LIB))
+	mpic++ $(CFLAGS) -std=c++11 -o jacobi_2d.exe jacobi_2d.cxx ../aux/queue.c ../aux/waitsome.c $(LDFLAGS) $(addprefix -l, $(LIB))
 	
 ###############################################################################
 

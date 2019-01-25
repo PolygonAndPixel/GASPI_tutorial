@@ -49,7 +49,7 @@ int main (int argc, char * argv[]) {
     const uint64_t verti     = rank / radix;
     const uint64_t horiz     = rank % radix;
     const bool     is_root   = rank == 0;
-
+    std::cout << "Hello from " << rank << " of " << num_ranks << std::endl;
     assert(num_ranks == radix*radix);
     assert((height-2) % radix == 0);
     assert((width -2) % radix == 0);
@@ -163,8 +163,6 @@ int main (int argc, char * argv[]) {
             offset_basis_local += width*sizeof(double); 
         }
 
-
-        
         write_list_notify_and_wait(
             local_height, segment_id_image_vec.data(), offset_local.data(), 
             0, segment_id_vec.data(), offset_remote.data(), 
