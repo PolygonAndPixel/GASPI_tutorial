@@ -15,11 +15,13 @@
 
 #include "aux/success_or_die.h"
 
+#include <mpi.h>
 #include <GASPI.h>
 #include <stdlib.h>
 
 int main(int argc, char *argv[])
 { 
+  MPI_Init (&argc, &argv);
   SUCCESS_OR_DIE( gaspi_proc_init(GASPI_BLOCK) );
  
   gaspi_rank_t rank;
@@ -30,5 +32,6 @@ int main(int argc, char *argv[])
     say hello from rank x of y
   */
  
+  MPI_Finalize();
   return EXIT_SUCCESS;
 }
